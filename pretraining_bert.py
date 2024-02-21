@@ -35,9 +35,11 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+
 from library.transformers.src.transformers.models.bert.modeling_bert import BertForMaskedLM
 from library.transformers.src.transformers.models.bert.configuration_bert import BertConfig
 import os
+from os import path
 
 os.environ["WANDB_DISABLED"] = "true"
 
@@ -49,13 +51,14 @@ gpu_mem = pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024**3)
 print(f"GPU: {gpu_name}, {gpu_mem} GB")
 print(f"{torch.cuda.is_available() = }")
 
-LIMIT_DATASET = 2016 * 4  # keep small for development, set to None for full dataset
+LIMIT_DATASET = 10 * 4  # keep small for development, set to None for full dataset
 
 RANDOM_SEED = 42
 NUM_TOKENIZER_TRAINING_ITEMS = 1_000_000  # I made this up, but it seems reasonable
 VOCAB_SIZE = 32_768  # from Cramming
 DEVICE_BATCH_SIZE = 36  # adjust to get near 100% gpu memory use
 MODEL_MAX_SEQ_LEN = 96  # from Cramming
+HIDDEN_SIZE = 128
 
 gradient_accumulation_steps = 2048 // DEVICE_BATCH_SIZE  # roughly based on Cramming
 batch_size = DEVICE_BATCH_SIZE * gradient_accumulation_steps
@@ -111,13 +114,14 @@ tokenizer.save(str(TOKENIZER_PATH))
 
 model_config = BertConfig(
     vocab_size=VOCAB_SIZE,
-    hidden_size=MODEL_MAX_SEQ_LEN,
+    hidden_size=HIDDEN_SIZE,
     max_sequence_length = MODEL_MAX_SEQ_LEN,
-    intermediate_size=4*MODEL_MAX_SEQ_LEN,
-    max_position_embeddings=MODEL_MAX_SEQ_LEN,
-    mlp_layers = [0],
+    # max_sequence_length = 96,
+    intermediate_size=4*HIDDEN_SIZE,
+    max_position_embeddings=HIDDEN_SIZE,
+    # mlp_layers = [1],
 )
-model = BertForMaskedLM(model_config)
+model = BertForMaskedLM(model_config, max_sequence_length=96, mlp_layers=[1] )
 tokenizer = BertTokenizerFast(tokenizer_file=str(TOKENIZER_PATH))
 
 
@@ -136,11 +140,10 @@ class TokenizedDataset(torch.utils.data.Dataset):
             self.dataset[i]["text"],
             return_tensors="pt",
             truncation=True,
-            max_length=MODEL_MAX_SEQ_LEN - 2,
+            max_length=MODEL_MAX_SEQ_LEN,
             padding="max_length",
             return_special_tokens_mask=True,
         )[0, ...]
-
 
 tokenized_dataset = TokenizedDataset(dataset, tokenizer)
 
@@ -160,7 +163,7 @@ training_args = TrainingArguments(
     adam_epsilon=1e-9,
     weight_decay=0.01,
     max_grad_norm=0.5,
-    num_train_epochs=1,
+    num_train_epochs=40,
     per_device_train_batch_size=DEVICE_BATCH_SIZE,
     gradient_accumulation_steps=gradient_accumulation_steps,
     dataloader_num_workers=4,
@@ -182,9 +185,10 @@ trainer = Trainer(
 with MagicTimer() as timer:
     trainer.train()
 print(f"Trained model in {timer}.")
-trainer.save_model(str(MODEL_DIR))
+# trainer.save_model(str(MODEL_DIR))
 TRAINER_HISTORY_PATH.write_text(json.dumps(trainer.state.log_history))
 
+torch.save(model.state_dict(), str(MODEL_DIR))
 print("Model's state_dict:")
 for param_tensor in model.state_dict():
     print(param_tensor, "\t", model.state_dict()[param_tensor].size())
@@ -193,3 +197,16 @@ trainer_history = pd.DataFrame(trainer.state.log_history[:-1]).set_index("step")
 trainer_history.loss.plot(label="loss")
 plt.ylabel("loss")
 plt.savefig(RUN_DIR / "loss.png")
+
+def visualizMLPWeights(model):
+  """
+  visualize the paramters of this layer
+  """
+  # weight_matrix = self.net.weight.detach().cpu()
+  weight_matrix = model.state_dict()["bert.encoder.layer.0.mlp.dense.weight"].detach().cpu()
+  plt.imshow(weight_matrix, cmap='hot', interpolation='nearest')
+  plt.colorbar()
+  plt.savefig(path.join(MODEL_DIR, "weights.png"))
+  plt.clf()
+
+visualizMLPWeights(model)
