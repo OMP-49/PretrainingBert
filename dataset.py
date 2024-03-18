@@ -64,22 +64,21 @@ def preprocess_for_distillation(dataset, bert_model, max_length, verbose=False):
 
     return dataset
 
-def preprocess_for_pretraining_bert(dataset, bert_model, max_length = 512, verbose = False):
-    """"
-    Preprocess dataset for pretraining bert:
-    1. truncate long sequence to fixed length
-    2. pad short sequence to fixed length 
-
-    bert_model: the BERT model to use
-    max_length: the fixed sequence length
-    """
-    preprocess_for_distillation(dataset, bert_model, max_length, verbose)
-
-    # data_collator = DataCollatorForLanguageModeling(
-    # tokenizer=tokenizer,
-    # mlm=True,
-    # mlm_probability=0.15,
-    # return_tensors="pt",
-# )
+def offset_dataset(dataset, tokenizer, max_length, verbose=False, stride = 0):
+    def tokenization(example):
+        return tokenizer(example["text"],
+                        return_tensors="pt",
+                        truncation=True,
+                        max_length=max_length, 
+                        padding='max_length',
+                        return_special_tokens_mask=True,
+                        return_overflowing_tokens=True,
+                        stride=stride)
+    
+    dataset = dataset.map(tokenization, remove_columns=dataset.column_names, batched = True, batch_size = 20)
+    dataset = dataset.shuffle(seed=42)
+    if verbose:
+        print("Preprocessed dataset:", dataset)
+    return dataset
     
 
