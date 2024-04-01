@@ -485,15 +485,7 @@ class BertMLP(nn.Module):
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states) #Add residual connections?
         return hidden_states
-    # def visualize(self):
-    #     assert self.path is not None
-    #     weight_matrix = self.dense.weight.detach().cpu()
-    #     plt.imshow(weight_matrix, cmap='hot', interpolation='nearest')
-    #     plt.colorbar()
-    #     plt.savefig(path.join(self.path, "weight.png"))
-        # plt.clf()
-        
-
+    
     def save_model(self):
         assert self.path is not None
         torch.save(self.state_dict(), path.join(self.path, "pretraing_mlp.pt"))
@@ -502,6 +494,24 @@ class BertMLP(nn.Module):
     def load_model(path):
         pass
 
+class BertAttentionMLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.denseQK = nn.Linear(config.hidden_size, config.hidden_size)
+        self.LayerNormSoftmax = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.denseV = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
+    def forward(self, hidden_states: torch.Tensor):
+        attn_scores = self.denseQK(hidden_states)
+        attn_scores = torch.matmul(attn_scores, hidden_states.T)
+        attn_scores = self.LayerNorm(attn_scores) #Add residual connections?
+        hidden_states = self.denseV(hidden_states)
+        hidden_states = torch.matmul(attn_scores, hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states) #Add residual connections?
+        return hidden_states
 
 class BertLayer(nn.Module):
     def __init__(self, config, isLayerMLP = False, max_sequence_length = None):
@@ -518,7 +528,7 @@ class BertLayer(nn.Module):
             self.crossattention = BertAttention(config, position_embedding_type="absolute")
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
-        self.mlp = BertMLP(config, max_sequence_length)
+        self.mlp = BertAttentionMLP(config)
 
     def forward(
         self,
